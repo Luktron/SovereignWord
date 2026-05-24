@@ -51,6 +51,8 @@ export default function BibleReader({ state, language, onSaveState, jumpBook, ju
   const [speakingVerseNum, setSpeakingVerseNum] = useState<number | null>(null);
   const verseIndexRef = useRef<number>(0);
   const iosKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [selectedVerseNum, setSelectedVerseNum] = useState<number | null>(null);
 
   // Selector Dropdown Modals
@@ -101,6 +103,14 @@ export default function BibleReader({ state, language, onSaveState, jumpBook, ju
       setSelectedChapter(jumpChapter);
     }
   }, [jumpBook, jumpChapter]);
+
+  useEffect(() => {
+    return () => {
+      if (audioContextRef.current) {
+        void audioContextRef.current.close();
+      }
+    };
+  }, []);
 
   // Fetch chapter data (preloaded or Dynamic AI generated in JFA/KJV depending on language)
   useEffect(() => {
@@ -241,6 +251,49 @@ export default function BibleReader({ state, language, onSaveState, jumpBook, ju
   };
 
   // ── TTS functions ─────────────────────────────────────────────────────────
+  const requestBrowserAudioUnlock = async (): Promise<boolean> => {
+    if (typeof window === "undefined") return false;
+
+    try {
+      const BrowserAudioContext = window.AudioContext
+        || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+      if (BrowserAudioContext) {
+        if (!audioContextRef.current) {
+          audioContextRef.current = new BrowserAudioContext();
+        }
+
+        if (audioContextRef.current.state === "suspended") {
+          await audioContextRef.current.resume();
+        }
+
+        // Pulso silencioso para liberar reprodução no iOS/Safari após gesto do usuário.
+        const gain = audioContextRef.current.createGain();
+        gain.gain.value = 0;
+        gain.connect(audioContextRef.current.destination);
+        const osc = audioContextRef.current.createOscillator();
+        osc.connect(gain);
+        osc.start();
+        osc.stop(audioContextRef.current.currentTime + 0.01);
+      }
+
+      if ("speechSynthesis" in window && !window.speechSynthesis.speaking) {
+        const warmup = new SpeechSynthesisUtterance(" ");
+        warmup.volume = 0;
+        warmup.rate = 1;
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(warmup);
+        window.speechSynthesis.cancel();
+      }
+
+      setAudioUnlocked(true);
+      return true;
+    } catch (error) {
+      console.warn("Falha ao habilitar áudio no browser:", error);
+      return false;
+    }
+  };
+
   const speakChapter = () => {
     if (!chapterData || !("speechSynthesis" in window)) return;
     const verses = chapterData.verses;
@@ -304,12 +357,23 @@ export default function BibleReader({ state, language, onSaveState, jumpBook, ju
     if (window.speechSynthesis.getVoices().length > 0) {
       doSpeak();
     } else {
-      window.speechSynthesis.addEventListener("voiceschanged", doSpeak, { once: true });
+      let started = false;
+      const startOnce = () => {
+        if (started) return;
+        started = true;
+        doSpeak();
+      };
+
+      window.speechSynthesis.addEventListener("voiceschanged", startOnce, { once: true });
+      setTimeout(startOnce, 350);
     }
   };
 
-  const handleTTSPlayPause = () => {
+  const handleTTSPlayPause = async () => {
     if (!isSpeaking) {
+      if (!audioUnlocked) {
+        await requestBrowserAudioUnlock();
+      }
       speakChapter();
     } else if (isPaused) {
       window.speechSynthesis.resume();
