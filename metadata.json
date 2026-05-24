@@ -1,0 +1,8 @@
+{
+  "name": "Sovereign Word",
+  "description": "Plataforma avançada de estudo bíblico com inteligência artificial teológica adventista, plano de leitura e gerador de sermões.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
