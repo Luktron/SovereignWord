@@ -62,6 +62,30 @@ export default function App() {
         setAppState(data);
       } catch (err) {
         console.error("Falha ao se conectar com banco de dados:", err);
+        // Fallback: try loading db.json directly as a static file
+        try {
+          const fallback = await fetch("/db.json");
+          if (fallback.ok) {
+            const data = await fallback.json();
+            setAppState(data);
+          } else {
+            throw new Error("Fallback db.json também indisponível");
+          }
+        } catch (fallbackErr) {
+          console.error("Fallback também falhou:", fallbackErr);
+          // Last resort: minimal state so app is not stuck forever
+          setAppState({
+            user: { id: "guest", name: "Visitante", email: "", avatarUrl: "", streak: 0, streakHistory: [], xp: 0, level: 1, chaptersReadCount: 0, versesReadCount: 0, studiesCompletedCount: 0, minutesRead: 0 },
+            activePlanId: "",
+            plans: [],
+            favorites: [],
+            notes: [],
+            sermons: [],
+            studies: [],
+            badges: [],
+            activeView: "dashboard"
+          });
+        }
       }
     };
     loadState();
