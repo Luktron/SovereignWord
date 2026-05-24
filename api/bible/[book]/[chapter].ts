@@ -1,44 +1,54 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { GoogleGenAI, Type } from "@google/genai";
+import * as fs from "fs";
+import * as path from "path";
 
-// Preloaded Genesis 1 (JFA) — served without calling AI
-const genesisOne = {
-  bookName: "Gênesis",
-  chapterNumber: 1,
-  verses: [
-    { number: 1, text: "No princípio, criou Deus os céus e a terra." },
-    { number: 2, text: "E a terra era sem forma e vazia; e havia trevas sobre a face do abismo; e o Espírito de Deus se movia sobre a face das águas." },
-    { number: 3, text: "E disse Deus: Haja luz. E houve luz." },
-    { number: 4, text: "E viu Deus que era boa a luz; e fez Deus separação entre a luz e as trevas." },
-    { number: 5, text: "E Deus chamou à luz Dia; e às trevas chamou Noite. E foi a tarde e a manhã: o dia primeiro." },
-    { number: 6, text: "E disse Deus: Haja um firmamento no meio das águas, e haja separação entre águas e águas." },
-    { number: 7, text: "E fez Deus o firmamento, e separação entre as águas que estavam debaixo do firmamento e as águas que estavam sobre o firmamento. E assim foi." },
-    { number: 8, text: "E chamou Deus ao firmamento Céu; e foi a tarde e a manhã: o dia segundo." },
-    { number: 9, text: "E disse Deus: Ajuntem-se as águas que estão debaixo dos céus num lugar; e apareça o elemento seco. E assim foi." },
-    { number: 10, text: "E chamou Deus ao elemento seco Terra; e ao ajuntamento das águas chamou Mares. E viu Deus que era bom." },
-    { number: 11, text: "E disse Deus: Produza a terra erva verde, erva que dê semente, árvore frutífera que dê fruto segundo a sua espécie, cuja semente esteja nela sobre a terra. E assim foi." },
-    { number: 12, text: "E a terra produziu erva, erva dando semente conforme a sua espécie, e árvore frutífera cuja semente estava nela, conforme a sua espécie. E viu Deus que era bom." },
-    { number: 13, text: "E foi a tarde e a manhã: o dia terceiro." },
-    { number: 14, text: "E disse Deus: Haja luminares no firmamento dos céus, para fazerem separação entre o dia e a noite; e sejam eles para sinais, e para tempos determinados, e para dias, e para anos." },
-    { number: 15, text: "E sejam para luminares no firmamento dos céus, para darem luz sobre a terra. E assim foi." },
-    { number: 16, text: "E fez Deus os dois grandes luminares: o luminar maior para governar o dia, e o luminar menor para governar a noite; e fez as estrelas." },
-    { number: 17, text: "E Deus os pôs no firmamento dos céus para darem luz sobre a terra;" },
-    { number: 18, text: "E para governarem o dia e a noite, e fazerem separação entre a luz e as trevas. E viu Deus que era bom." },
-    { number: 19, text: "E foi a tarde e a manhã: o dia quarto." },
-    { number: 20, text: "E disse Deus: Produzam as águas abundantemente répteis de alma vivente; e voem as aves sobre a terra, na face do firmamento dos céus." },
-    { number: 21, text: "E criou Deus as grandes baleias, e todo réptil de alma vivente que as águas produziram abundantemente conforme as suas espécies; e toda ave de asa conforme a sua espécie. E viu Deus que era bom." },
-    { number: 22, text: "E Deus os abençoou, dizendo: Sede fecundos e multiplicai-vos, e enchei as águas nos mares; e as aves se multipliquem na terra." },
-    { number: 23, text: "E foi a tarde e a manhã: o dia quinto." },
-    { number: 24, text: "E disse Deus: Produza a terra alma vivente conforme a sua espécie: gado, e répteis, e feras da terra conforme a sua espécie. E assim foi." },
-    { number: 25, text: "E fez Deus as feras da terra conforme a sua espécie, e o gado conforme a sua espécie, e todo réptil da terra conforme a sua espécie. E viu Deus que era bom." },
-    { number: 26, text: "E disse Deus: Façamos o homem à nossa imagem, conforme a nossa semelhança; e domine sobre os peixes do mar, e sobre as aves dos céus, e sobre o gado, e sobre toda a terra, e sobre todo réptil que se move sobre a terra." },
-    { number: 27, text: "E criou Deus o homem à sua imagem; à imagem de Deus o criou; homem e mulher os criou." },
-    { number: 28, text: "E Deus os abençoou, e Deus lhes disse: Sede fecundos e multiplicai-vos, e enchei a terra, e sujeitai-a; e dominai sobre os peixes do mar e sobre as aves dos céus, e sobre todo animal que se move sobre a terra." },
-    { number: 29, text: "E disse Deus: Eis que vos tenho dado toda erva que dê semente, que se acha sobre a face de toda a terra, e toda árvore em que há fruto que dê semente; ser-vos-á para mantimento." },
-    { number: 30, text: "E a todo animal da terra, e a toda ave dos céus, e a todo réptil da terra em que há alma vivente, toda erva verde ser-lhes-á para mantimento. E assim foi." },
-    { number: 31, text: "E viu Deus tudo quanto tinha feito, e eis que era muito bom. E foi a tarde e a manhã: o dia sexto." }
-  ]
+// ── JFA Bible (Almeida Atualizada) loaded from local JSON ──────────────────
+interface JfaBook {
+  abbrev: string;
+  name: string;
+  chapters: string[][];
+}
+
+let jfaBible: JfaBook[] | null = null;
+
+function getJfaBible(): JfaBook[] {
+  if (jfaBible) return jfaBible;
+  // process.cwd() is the project root in both local (tsx) and Vercel environments
+  const filePath = path.join(process.cwd(), "api", "bible-jfa.json");
+  const raw = fs.readFileSync(filePath, "utf-8").replace(/^\uFEFF/, ""); // strip BOM
+  jfaBible = JSON.parse(raw) as JfaBook[];
+  return jfaBible;
+}
+
+// Normalise accents/punctuation for fuzzy matching
+function normalise(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, "")
+    .trim();
+}
+
+// App uses slightly different names for a few books — map them here
+const NAME_OVERRIDES: Record<string, string> = {
+  cantares: "canticos",
+  lamentacoes: "lamentacoes de jeremias",
+  filemon: "filemom",
 };
+
+function findJfaChapter(bookName: string, chapterNum: number): string[] | null {
+  const bible = getJfaBible();
+  const normInput = normalise(bookName);
+  const key = NAME_OVERRIDES[normInput] ?? normInput;
+
+  const book = bible.find((b) => normalise(b.name) === key);
+  if (!book) return null;
+
+  const chapter = book.chapters[chapterNum - 1];
+  return chapter ?? null;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {
@@ -50,12 +60,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const lang = req.query.lang as string;
   const chapterNum = parseInt(chapter, 10);
 
-  // Serve preloaded Genesis 1 in Portuguese
-  if (book === "Gênesis" && chapterNum === 1 && lang !== "en") {
-    return res.json(genesisOne);
+  // ── Portuguese: serve directly from local JFA JSON (no API key needed) ──
+  if (lang !== "en") {
+    try {
+      const verses = findJfaChapter(book, chapterNum);
+      if (verses && verses.length > 0) {
+        return res.json({
+          bookName: book,
+          chapterNumber: chapterNum,
+          verses: verses.map((text, i) => ({ number: i + 1, text })),
+        });
+      }
+    } catch (err) {
+      console.error("JFA local lookup failed:", err);
+    }
+    // Fallback message if book/chapter not found in local JSON
+    return res.json({
+      bookName: book,
+      chapterNumber: chapterNum,
+      verses: [{ number: 1, text: `Capítulo ${chapterNum} de ${book} não encontrado no banco de dados local.` }],
+    });
   }
 
-  // Serve preloaded Genesis 1 in English (KJV)
+  // ── English: Genesis 1 KJV preloaded, others via AI ──────────────────────
   if (book === "Gênesis" && chapterNum === 1 && lang === "en") {
     return res.json({
       bookName: "Genesis",
@@ -71,14 +98,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
+  // English path only — AI key required for KJV
   if (!process.env.GEMINI_API_KEY) {
-    const isEnglish = lang === "en";
     return res.json({
-      bookName: isEnglish && book === "Gênesis" ? "Genesis" : book,
+      bookName: book === "Gênesis" ? "Genesis" : book,
       chapterNumber: chapterNum,
-      verses: isEnglish
-        ? [{ number: 1, text: `[Offline Mode] Chapter ${chapterNum} of ${book}. Set GEMINI_API_KEY in Vercel environment variables to activate the full 66-book Bible.` }]
-        : [{ number: 1, text: `[Modo Offline] Capítulo ${chapterNum} de ${book}. Configure a variável GEMINI_API_KEY nas variáveis de ambiente da Vercel para ativar a Bíblia completa.` }]
+      verses: [{ number: 1, text: `[Offline Mode/No AI Key] Chapter ${chapterNum} of ${book}. Please set GEMINI_API_KEY to activate the full KJV Bible in English.` }],
     });
   }
 

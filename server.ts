@@ -7,12 +7,38 @@ import express from "express";
 import http from "http";
 import os from "os";
 import path from "path";
+import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { getDatabase, saveDatabase } from "./server/db";
-import { preloadedChapters, booksMetadata } from "./src/data/bibleData";
+import { booksMetadata } from "./src/data/bibleData";
 import { AppState, Sermon } from "./src/types";
+
+// ── JFA Bible local JSON ────────────────────────────────────────────────────
+interface JfaBook { abbrev: string; name: string; chapters: string[][]; }
+let _jfaBible: JfaBook[] | null = null;
+function getJfaBible(): JfaBook[] {
+  if (_jfaBible) return _jfaBible;
+  const filePath = path.join(process.cwd(), "api", "bible-jfa.json");
+  const raw = fs.readFileSync(filePath, "utf-8").replace(/^\uFEFF/, "");
+  _jfaBible = JSON.parse(raw) as JfaBook[];
+  return _jfaBible;
+}
+function normaliseBook(s: string): string {
+  return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9\s]/g, "").trim();
+}
+const JFA_NAME_OVERRIDES: Record<string, string> = {
+  cantares: "canticos",
+  lamentacoes: "lamentacoes de jeremias",
+  filemon: "filemom",
+};
+function findJfaChapter(bookName: string, chapterNum: number): string[] | null {
+  const bible = getJfaBible();
+  const key = JFA_NAME_OVERRIDES[normaliseBook(bookName)] ?? normaliseBook(bookName);
+  const book = bible.find((b) => normaliseBook(b.name) === key);
+  return book?.chapters[chapterNum - 1] ?? null;
+}
 
 dotenv.config();
 
@@ -72,14 +98,29 @@ async function startServer() {
     const { book, chapter } = req.params;
     const { lang } = req.query; // pt or en
     const chapterNum = parseInt(chapter, 10);
-    const key = `${book}_${chapter}`;
 
-    // 1. Check if we have preloaded verses locally (for Gênesis 1 index)
-    if (preloadedChapters[key] && lang !== "en") {
-      return res.json(preloadedChapters[key]);
+    // ── Portuguese: serve directly from local JFA JSON (no API key needed) ──
+    if (lang !== "en") {
+      try {
+        const verses = findJfaChapter(book, chapterNum);
+        if (verses && verses.length > 0) {
+          return res.json({
+            bookName: book,
+            chapterNumber: chapterNum,
+            verses: verses.map((text, i) => ({ number: i + 1, text })),
+          });
+        }
+      } catch (err) {
+        console.error("JFA local lookup failed:", err);
+      }
+      return res.json({
+        bookName: book,
+        chapterNumber: chapterNum,
+        verses: [{ number: 1, text: `Capítulo ${chapterNum} de ${book} não encontrado no banco de dados local.` }],
+      });
     }
 
-    // Special KJV preloaded fallback for Genesis 1 block in English
+    // ── English: Genesis 1 KJV preloaded, others via AI ──────────────────────
     if (book === "Gênesis" && chapterNum === 1 && lang === "en") {
       return res.json({
         bookName: "Genesis",
@@ -95,26 +136,14 @@ async function startServer() {
       });
     }
 
-    // 2. Otherwise trigger our theological translator in JFA or KJV based on lang
+    // English path only — AI key required for KJV
     try {
       if (!process.env.GEMINI_API_KEY) {
-        // Mock fallback if key is not configured yet
-        if (lang === "en") {
-          return res.json({
-            bookName: book === "Gênesis" ? "Genesis" : book,
-            chapterNumber: chapterNum,
-            verses: [
-              { number: 1, text: `[Offline Mode / No AI Key] In the beginning of chapter ${chapterNum} of ${book}...` },
-              { number: 2, text: `Please configure your API key inside Secrets configuration to activate full 66-book Bible indexing in King James Version!` }
-            ]
-          });
-        }
         return res.json({
-          bookName: book,
+          bookName: book === "Gênesis" ? "Genesis" : book,
           chapterNumber: chapterNum,
           verses: [
-            { number: 1, text: `[Modo Offline/Sem Chave AI] No princípio do capítulo ${chapterNum} de ${book}...` },
-            { number: 2, text: `Por favor, ative a sua chave de API nos Secrets para desbloquear a Bíblia JFA completa de 66 livros!` }
+            { number: 1, text: `[Offline Mode/No AI Key] Chapter ${chapterNum} of ${book}. Please set GEMINI_API_KEY to activate the full KJV Bible in English.` }
           ]
         });
       }
