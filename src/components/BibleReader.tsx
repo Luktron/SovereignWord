@@ -528,7 +528,7 @@ export default function BibleReader({ state, language, onSaveState, jumpBook, ju
         <span className="text-[10px] font-bold tracking-[0.35em] text-amber-600/60 dark:text-amber-500/60 uppercase block mb-1">
           {selectedBook.testament === "Old" ? t.bible.oldTestament : t.bible.newTestament} · {currentBookName}
         </span>
-        <span className="font-serif font-bold text-[90px] md:text-[115px] leading-none text-amber-200/80 dark:text-amber-900/30 block">
+        <span className="font-serif font-bold text-[62px] md:text-[78px] leading-none text-amber-200/80 dark:text-amber-900/30 block">
           {selectedChapter}
         </span>
         <div className="flex items-center justify-center gap-4 -mt-2">
