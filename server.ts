@@ -13,48 +13,96 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { getDatabase, saveDatabase } from "./server/db";
 import { booksMetadata } from "./src/data/bibleData";
+import { bookTranslations } from "./src/data/translations";
 import { AppState, Sermon } from "./src/types";
 
 // ── JFA Bible local JSON ────────────────────────────────────────────────────
-interface JfaBook { abbrev: string; name: string; chapters: string[][]; }
-let _jfaBible: JfaBook[] | null = null;
-function getJfaBible(): JfaBook[] {
+interface BibleBook { abbrev: string; name: string; chapters: string[][]; }
+let _jfaBible: BibleBook[] | null = null;
+let _kjvBible: BibleBook[] | null = null;
+
+function getJfaBible(): BibleBook[] {
   if (_jfaBible) return _jfaBible;
   const filePath = path.join(process.cwd(), "api", "bible-jfa.json");
   const raw = fs.readFileSync(filePath, "utf-8").replace(/^\uFEFF/, "");
-  _jfaBible = JSON.parse(raw) as JfaBook[];
+  _jfaBible = JSON.parse(raw) as BibleBook[];
   return _jfaBible;
 }
+
+function getKjvBible(): BibleBook[] {
+  if (_kjvBible) return _kjvBible;
+  const filePath = path.join(process.cwd(), "api", "bible-kjv.json");
+  const raw = fs.readFileSync(filePath, "utf-8").replace(/^\uFEFF/, "");
+  _kjvBible = JSON.parse(raw) as BibleBook[];
+  return _kjvBible;
+}
+
 function normaliseBook(s: string): string {
   return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9\s]/g, "").trim();
 }
+function normaliseBookKey(s: string): string {
+  return normaliseBook(s).replace(/\s+/g, "");
+}
+
 const JFA_NAME_OVERRIDES: Record<string, string> = {
   cantares: "canticos",
   lamentacoes: "lamentacoes de jeremias",
   filemon: "filemom",
 };
-function findJfaChapter(bookName: string, chapterNum: number): string[] | null {
-  const bible = getJfaBible();
-  const key = JFA_NAME_OVERRIDES[normaliseBook(bookName)] ?? normaliseBook(bookName);
-  const book = bible.find((b) => normaliseBook(b.name) === key);
-  return book?.chapters[chapterNum - 1] ?? null;
+
+const PT_TO_EN_BOOK_NAMES: Record<string, string> = Object.values(bookTranslations).reduce((acc, entry) => {
+  acc[normaliseBookKey(entry.pt)] = normaliseBook(entry.en);
+  return acc;
+}, {} as Record<string, string>);
+
+function findBibleChapter(bible: BibleBook[], bookName: string, chapterNum: number, overrides?: Record<string, string>): string[] | null {
+  const key = normaliseBookKey(bookName);
+  const directCandidates = new Set<string>();
+  directCandidates.add(normaliseBook(bookName));
+  directCandidates.add(PT_TO_EN_BOOK_NAMES[key] ?? "");
+  directCandidates.add(overrides?.[key] ?? "");
+
+  for (const candidate of directCandidates) {
+    if (!candidate) continue;
+    const match = bible.find((b) => normaliseBook(b.name) === candidate);
+    if (match?.chapters[chapterNum - 1]) {
+      return match.chapters[chapterNum - 1];
+    }
+  }
+
+  const canonicalIndex = booksMetadata.findIndex((b) => normaliseBookKey(b.name) === key);
+  if (canonicalIndex >= 0 && canonicalIndex < bible.length) {
+    return bible[canonicalIndex]?.chapters[chapterNum - 1] ?? null;
+  }
+
+  return null;
 }
 
 dotenv.config();
 
-// Initialize Gemini Client
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      "User-Agent": "aistudio-build",
-    },
-  },
-});
+let geminiClient: GoogleGenAI | null = null;
+function getGeminiClient(): GoogleGenAI | null {
+  if (!process.env.GEMINI_API_KEY) return null;
+  if (!geminiClient) {
+    geminiClient = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+  }
+  return geminiClient;
+}
 
 async function startServer() {
   const app = express();
-  const PORT = 5990;
+  const HOST = "0.0.0.0";
+  const FALLBACK_START_PORT = 5990;
+  const MAX_PORT_RETRIES = 10;
+  const envPort = Number.parseInt(process.env.PORT ?? "", 10);
+  const initialPort = Number.isInteger(envPort) && envPort > 0 ? envPort : FALLBACK_START_PORT;
 
   // Detectar IP da rede local
   const getNetworkIP = (): string => {
@@ -102,7 +150,7 @@ async function startServer() {
     // ── Portuguese: serve directly from local JFA JSON (no API key needed) ──
     if (lang !== "en") {
       try {
-        const verses = findJfaChapter(book, chapterNum);
+        const verses = findBibleChapter(getJfaBible(), book, chapterNum, JFA_NAME_OVERRIDES);
         if (verses && verses.length > 0) {
           return res.json({
             bookName: book,
@@ -120,72 +168,26 @@ async function startServer() {
       });
     }
 
-    // ── English: Genesis 1 KJV preloaded, others via AI ──────────────────────
-    if (book === "Gênesis" && chapterNum === 1 && lang === "en") {
-      return res.json({
-        bookName: "Genesis",
-        chapterNumber: 1,
-        verses: [
-          { number: 1, text: "In the beginning God created the heaven and the earth." },
-          { number: 2, text: "And the earth was without form, and void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face of the waters." },
-          { number: 3, text: "And God said, Let there be light: and there was light." },
-          { number: 4, text: "And God saw the light, that it was good: and God divided the light from the darkness." },
-          { number: 5, text: "And God called the light Day, and the darkness he called Night. And the evening and the morning were the first day." },
-          { number: 6, text: "And God said, Let there be a firmament in the midst of the waters, and let it divide the waters from the waters." }
-        ]
-      });
-    }
-
-    // English path only — AI key required for KJV
+    // ── English: serve directly from local KJV JSON (no API key needed) ─────
     try {
-      if (!process.env.GEMINI_API_KEY) {
+      const verses = findBibleChapter(getKjvBible(), book, chapterNum);
+      const translatedName = bookTranslations[normaliseBookKey(book)]?.en ?? book;
+      if (verses && verses.length > 0) {
         return res.json({
-          bookName: book === "Gênesis" ? "Genesis" : book,
+          bookName: translatedName,
           chapterNumber: chapterNum,
-          verses: [
-            { number: 1, text: `[Offline Mode/No AI Key] Chapter ${chapterNum} of ${book}. Please set GEMINI_API_KEY to activate the full KJV Bible in English.` }
-          ]
+          verses: verses.map((text, i) => ({ number: i + 1, text })),
         });
       }
-
-      console.log(`Buscando ${book} ${chapterNum} via inteligência artificial (${lang})...`);
-      const targetVersion = lang === "en" ? "King James Version (KJV) Bible translation" : "língua portuguesa João Ferreira de Almeida (JFA)";
-      const systemInstruction = lang === "en"
-        ? "You are an expert Bible translator. Your objective is to return the exact verses matching the classic King James Version (KJV)."
-        : "Você é um tradutor bíblico especializado na tradução clássica João Ferreira de Almeida (Almeida Revista e Corrigida ou Atualizada). Seu objetivo é retornar estritamente a fidelidade dos versículos oficiais da Bíblia JFA.";
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: `Gere os versículos exatos do capítulo ${chapterNum} do livro de ${book} na versão de tradução ${targetVersion}. Apenas retorne um array JSON válido de objetos com os campos "number" (número do versículo) e "text" (texto do versículo de forma fidedigna). Não insira notas, cabeçalhos nem conversa.`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                number: { type: Type.INTEGER },
-                text: { type: Type.STRING }
-              },
-              required: ["number", "text"]
-            }
-          },
-          systemInstruction: systemInstruction
-        }
-      });
-
-      const textOutput = response.text || "[]";
-      const verses = JSON.parse(textOutput);
-
-      res.json({
-        bookName: book === "Gênesis" && lang === "en" ? "Genesis" : book,
-        chapterNumber: chapterNum,
-        verses: verses
-      });
     } catch (err) {
-      console.error("Erro AI Bible:", err);
-      res.status(500).json({ error: "Erro ao carregar capitulo de forma dinâmica." });
+      console.error("KJV local lookup failed:", err);
     }
+
+    return res.json({
+      bookName: bookTranslations[normaliseBookKey(book)]?.en ?? book,
+      chapterNumber: chapterNum,
+      verses: [{ number: 1, text: `Chapter ${chapterNum} of ${book} was not found in the local KJV database.` }],
+    });
   });
 
   // API Route - Adventist Theological Assistant (RAG context & expert)
@@ -228,6 +230,11 @@ Instruções fundamentais:
 2. Destaque conexões com o Santuário e os três anjos de Apocalipse 14.
 3. Apresente ao final de sua resposta um sumário teológico condensado (no campo 'Lumina Insight').
 4. Retorne as fontes e os textos bíblicos consultados como referências de rodapé.`;
+
+      const ai = getGeminiClient();
+      if (!ai) {
+        return res.status(500).json({ error: "Cliente Gemini indisponível." });
+      }
 
       const response = await ai.models.generateContent({
         model: "gemini-3.5-flash",
@@ -326,6 +333,11 @@ O esboço homilético deve herdar uma profunda exegese bíblica alinhada com as 
         ? "You are an experienced Adventist Homiletician, Professor, and pulpit preacher. Your outlines combine deep exegesis, linguistic word studies (Hebrew/Greek), and moving illustrations with practical salvation appeals. Generate the complete sermon draft strictly structured into the specified JSON response schema, written fully in English."
         : "Você é um mestre Homileta e Orador teológico adventista altamente experiente. Suas pregações são famosas por equilibrar teologia acadêmica, exegese linguística (hebraico/grego) e ilustrações tocantes com foco prático de apelo de salvação. Gere o sermão de forma extremamente organizada no seguinte esquema de resposta do JSON:";
 
+      const ai = getGeminiClient();
+      if (!ai) {
+        return res.status(500).json({ error: "Cliente Gemini indisponível." });
+      }
+
       const response = await ai.models.generateContent({
         model: "gemini-3.5-flash",
         contents: promptCommand,
@@ -400,22 +412,54 @@ O esboço homilético deve herdar uma profunda exegese bíblica alinhada com as 
     });
   }
 
-  httpServer.listen(PORT, "0.0.0.0", () => {
-    const networkIP = getNetworkIP();
-    console.log("");
-    console.log(`  \x1b[32m\u279C\x1b[0m  \x1b[1mLocal:\x1b[0m   \x1b[36mhttp://localhost:${PORT}/\x1b[0m`);
-    console.log(`  \x1b[32m\u279C\x1b[0m  \x1b[1mNetwork:\x1b[0m http://${networkIP}:${PORT}/`);
-    console.log("");
-    httpServer.ref();
-  });
+  const listenWithFallback = async (): Promise<number> => {
+    let retries = 0;
+    let port = initialPort;
+
+    while (retries <= MAX_PORT_RETRIES) {
+      const selectedPort = await new Promise<number | null>((resolve, reject) => {
+        const onError = (err: NodeJS.ErrnoException) => {
+          httpServer.removeListener("listening", onListening);
+          if (err.code === "EADDRINUSE") {
+            resolve(null);
+            return;
+          }
+          reject(err);
+        };
+
+        const onListening = () => {
+          httpServer.removeListener("error", onError);
+          resolve(port);
+        };
+
+        httpServer.once("error", onError);
+        httpServer.once("listening", onListening);
+        httpServer.listen(port, HOST);
+      });
+
+      if (selectedPort !== null) return selectedPort;
+
+      retries += 1;
+      port += 1;
+    }
+
+    throw new Error(`Nenhuma porta disponível entre ${initialPort} e ${initialPort + MAX_PORT_RETRIES}.`);
+  };
+
+  const activePort = await listenWithFallback();
+
+  const networkIP = getNetworkIP();
+  console.log("");
+  console.log(`  \x1b[32m\u279C\x1b[0m  \x1b[1mLocal:\x1b[0m   \x1b[36mhttp://localhost:${activePort}/\x1b[0m`);
+  console.log(`  \x1b[32m\u279C\x1b[0m  \x1b[1mNetwork:\x1b[0m http://${networkIP}:${activePort}/`);
+  if (activePort !== initialPort) {
+    console.warn(`Porta ${initialPort} em uso. Servidor iniciado na porta ${activePort}.`);
+  }
+  console.log("");
+  httpServer.ref();
 
   httpServer.on("error", (err: NodeJS.ErrnoException) => {
-    if (err.code === "EADDRINUSE") {
-      console.error(`Porta ${PORT} já está em uso. Encerre o processo anterior e tente novamente.`);
-      process.exit(1);
-    } else {
-      console.error("Erro no servidor (não fatal):", err.code, err.message);
-    }
+    console.error("Erro no servidor (não fatal):", err.code, err.message);
   });
 }
 
