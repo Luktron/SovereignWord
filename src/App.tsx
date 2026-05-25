@@ -65,24 +65,8 @@ export default function App() {
         setAppState(data);
       } catch (err) {
         console.error("Falha ao se conectar com banco de dados:", err);
-        // Fallback: try loading db.json directly as a static file
-        try {
-          const fallback = await fetch("/db.json");
-          if (fallback.ok) {
-            const contentType = fallback.headers.get("content-type") || "";
-            if (!contentType.includes("application/json")) {
-              throw new Error("Fallback db.json retornou conteúdo não-JSON");
-            }
-            const data = await fallback.json();
-            setAppState(data as AppState);
-          } else {
-            throw new Error("Fallback db.json também indisponível");
-          }
-        } catch (fallbackErr) {
-          console.error("Fallback também falhou:", fallbackErr);
-          // Last resort: use bundled seed state to avoid rendering crashes
-          setAppState(fallbackState);
-        }
+        // Use bundled seed state to keep UI functional when API is unavailable
+        setAppState(fallbackState);
       }
     };
     loadState();

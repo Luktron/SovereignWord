@@ -8,6 +8,7 @@ import { BookOpen, Sparkles, Highlighter, Heart, ChevronDown, ChevronLeft, Chevr
 import { Chapter, Verse, BookMetadata, AppState } from "../types";
 import { booksMetadata } from "../data/bibleData";
 import { translations, getTranslatedBookName } from "../data/translations";
+import { loadChapterFromLocalBible } from "../data/localBibleFallback";
 
 interface BibleReaderProps {
   state: AppState;
@@ -144,19 +145,43 @@ export default function BibleReader({ state, language, onSaveState, jumpBook, ju
         });
       } catch (err) {
         console.error(err);
-        setChapterData({
-          bookName: selectedBook.name,
-          chapterNumber: selectedChapter,
-          verses: [
-            {
-              number: 1,
-              text:
-                language === "en"
-                  ? "Unable to load this chapter from the server right now. Please try again in a moment."
-                  : "Nao foi possivel carregar este capitulo do servidor agora. Tente novamente em instantes.",
-            },
-          ],
-        });
+
+        const localFallback = await loadChapterFromLocalBible(selectedBook.name, selectedChapter, language);
+        if (localFallback) {
+          const mergedVerses = localFallback.verses.map((v) => {
+            const favoriteExists = state.favorites.some(
+              (f) => f.book === selectedBook.name && f.chapter === selectedChapter && f.verse === v.number
+            );
+            const noteExists = state.notes.find(
+              (n) => n.book === selectedBook.name && n.chapter === selectedChapter && n.verse === v.number
+            );
+            return {
+              ...v,
+              favorite: favoriteExists,
+              note: noteExists?.note || "",
+              highlighted: v.number === 3 ? "rgba(212, 175, 55, 0.15)" : undefined
+            };
+          });
+
+          setChapterData({
+            ...localFallback,
+            verses: mergedVerses
+          });
+        } else {
+          setChapterData({
+            bookName: selectedBook.name,
+            chapterNumber: selectedChapter,
+            verses: [
+              {
+                number: 1,
+                text:
+                  language === "en"
+                    ? "Unable to load this chapter from the server right now. Please try again in a moment."
+                    : "Nao foi possivel carregar este capitulo do servidor agora. Tente novamente em instantes.",
+              },
+            ],
+          });
+        }
       } finally {
         setLoading(false);
       }
