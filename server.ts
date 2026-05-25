@@ -23,7 +23,7 @@ let _kjvBible: BibleBook[] | null = null;
 
 function getJfaBible(): BibleBook[] {
   if (_jfaBible) return _jfaBible;
-  const filePath = path.join(process.cwd(), "api", "bible-jfa.json");
+  const filePath = path.join(process.cwd(), "data", "private", "bible-jfa.json");
   const raw = fs.readFileSync(filePath, "utf-8").replace(/^\uFEFF/, "");
   _jfaBible = JSON.parse(raw) as BibleBook[];
   return _jfaBible;
@@ -31,7 +31,7 @@ function getJfaBible(): BibleBook[] {
 
 function getKjvBible(): BibleBook[] {
   if (_kjvBible) return _kjvBible;
-  const filePath = path.join(process.cwd(), "api", "bible-kjv.json");
+  const filePath = path.join(process.cwd(), "data", "private", "bible-kjv.json");
   const raw = fs.readFileSync(filePath, "utf-8").replace(/^\uFEFF/, "");
   _kjvBible = JSON.parse(raw) as BibleBook[];
   return _kjvBible;
