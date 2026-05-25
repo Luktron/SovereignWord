@@ -1,50 +1,25 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import * as fs from "fs";
-import * as path from "path";
 import { booksMetadata } from "../../../src/data/bibleData";
 import { bookTranslations } from "../../../src/data/translations";
+// Static imports — esbuild bundles these directly, no filesystem access needed
+import jfaData from "../../../data/private/bible-jfa.json";
+import kjvData from "../../../data/private/bible-kjv.json";
 
-// ── Local Bible JSON loaders (JFA + KJV) ───────────────────────────────────
+// ── Bible data types ────────────────────────────────────────────────────────
 interface BibleBook {
   abbrev: string;
   name: string;
   chapters: string[][];
 }
 
-let jfaBible: BibleBook[] | null = null;
-let kjvBible: BibleBook[] | null = null;
-
-function resolveBibleFilePath(fileName: string): string {
-  const roots = [
-    process.cwd(),
-    process.env.LAMBDA_TASK_ROOT,
-    "/var/task",
-    path.resolve(process.cwd(), ".."),
-  ].filter(Boolean) as string[];
-
-  for (const root of roots) {
-    const candidate = path.join(root, "data", "private", fileName);
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  throw new Error(`Bible JSON not found: ${fileName}`);
-}
+const jfaBible = jfaData as unknown as BibleBook[];
+const kjvBible = kjvData as unknown as BibleBook[];
 
 function getJfaBible(): BibleBook[] {
-  if (jfaBible) return jfaBible;
-  const filePath = resolveBibleFilePath("bible-jfa.json");
-  const raw = fs.readFileSync(filePath, "utf-8").replace(/^\uFEFF/, "");
-  jfaBible = JSON.parse(raw) as BibleBook[];
   return jfaBible;
 }
 
 function getKjvBible(): BibleBook[] {
-  if (kjvBible) return kjvBible;
-  const filePath = resolveBibleFilePath("bible-kjv.json");
-  const raw = fs.readFileSync(filePath, "utf-8").replace(/^\uFEFF/, "");
-  kjvBible = JSON.parse(raw) as BibleBook[];
   return kjvBible;
 }
 
