@@ -24,6 +24,7 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { AppState } from "./types";
 import { translations } from "./data/translations";
+import seedState from "../db.json";
 
 // Component imports
 import SpiritualDashboard from "./components/SpiritualDashboard";
@@ -55,6 +56,8 @@ export default function App() {
     }
 
     const loadState = async () => {
+      const fallbackState = structuredClone(seedState) as AppState;
+
       try {
         const res = await fetch("/api/db");
         if (!res.ok) throw new Error("Erro de rede ao buscar DB do servidor");
@@ -66,25 +69,19 @@ export default function App() {
         try {
           const fallback = await fetch("/db.json");
           if (fallback.ok) {
+            const contentType = fallback.headers.get("content-type") || "";
+            if (!contentType.includes("application/json")) {
+              throw new Error("Fallback db.json retornou conteúdo não-JSON");
+            }
             const data = await fallback.json();
-            setAppState(data);
+            setAppState(data as AppState);
           } else {
             throw new Error("Fallback db.json também indisponível");
           }
         } catch (fallbackErr) {
           console.error("Fallback também falhou:", fallbackErr);
-          // Last resort: minimal state so app is not stuck forever
-          setAppState({
-            user: { id: "guest", name: "Visitante", email: "", avatarUrl: "", streak: 0, streakHistory: [], xp: 0, level: 1, chaptersReadCount: 0, versesReadCount: 0, studiesCompletedCount: 0, minutesRead: 0 },
-            activePlanId: "",
-            plans: [],
-            favorites: [],
-            notes: [],
-            sermons: [],
-            studies: [],
-            badges: [],
-            activeView: "dashboard"
-          });
+          // Last resort: use bundled seed state to avoid rendering crashes
+          setAppState(fallbackState);
         }
       }
     };
