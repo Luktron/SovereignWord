@@ -144,6 +144,19 @@ export default function BibleReader({ state, language, onSaveState, jumpBook, ju
         });
       } catch (err) {
         console.error(err);
+        setChapterData({
+          bookName: selectedBook.name,
+          chapterNumber: selectedChapter,
+          verses: [
+            {
+              number: 1,
+              text:
+                language === "en"
+                  ? "Unable to load this chapter from the server right now. Please try again in a moment."
+                  : "Nao foi possivel carregar este capitulo do servidor agora. Tente novamente em instantes.",
+            },
+          ],
+        });
       } finally {
         setLoading(false);
       }
