@@ -6,7 +6,10 @@
   ],
   "functions": {
     "api/**/*.ts": {
-      "includeFiles": "db.json|data/private/bible-jfa.json|data/private/bible-kjv.json"
+      "includeFiles": [
+        "db.json",
+        "data/private/**/*.json"
+      ]
     }
   }
 }

@@ -14,9 +14,27 @@ interface BibleBook {
 let jfaBible: BibleBook[] | null = null;
 let kjvBible: BibleBook[] | null = null;
 
+function resolveBibleFilePath(fileName: string): string {
+  const roots = [
+    process.cwd(),
+    process.env.LAMBDA_TASK_ROOT,
+    "/var/task",
+    path.resolve(process.cwd(), ".."),
+  ].filter(Boolean) as string[];
+
+  for (const root of roots) {
+    const candidate = path.join(root, "data", "private", fileName);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`Bible JSON not found: ${fileName}`);
+}
+
 function getJfaBible(): BibleBook[] {
   if (jfaBible) return jfaBible;
-  const filePath = path.join(process.cwd(), "data", "private", "bible-jfa.json");
+  const filePath = resolveBibleFilePath("bible-jfa.json");
   const raw = fs.readFileSync(filePath, "utf-8").replace(/^\uFEFF/, "");
   jfaBible = JSON.parse(raw) as BibleBook[];
   return jfaBible;
@@ -24,7 +42,7 @@ function getJfaBible(): BibleBook[] {
 
 function getKjvBible(): BibleBook[] {
   if (kjvBible) return kjvBible;
-  const filePath = path.join(process.cwd(), "data", "private", "bible-kjv.json");
+  const filePath = resolveBibleFilePath("bible-kjv.json");
   const raw = fs.readFileSync(filePath, "utf-8").replace(/^\uFEFF/, "");
   kjvBible = JSON.parse(raw) as BibleBook[];
   return kjvBible;
