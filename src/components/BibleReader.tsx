@@ -332,6 +332,14 @@ export default function BibleReader({ state, language, onSaveState, jumpBook, ju
     }
   };
 
+  const shouldUseIOSKeepAlive = (): boolean => {
+    if (typeof navigator === "undefined") return false;
+    const ua = navigator.userAgent.toLowerCase();
+    const isIOS = /iphone|ipad|ipod/.test(ua)
+      || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    return isIOS;
+  };
+
   const speakChapter = () => {
     if (!chapterData || !("speechSynthesis" in window)) return;
     const verses = chapterData.verses;
@@ -342,13 +350,15 @@ export default function BibleReader({ state, language, onSaveState, jumpBook, ju
     setIsSpeaking(true);
     setIsPaused(false);
 
-    // iOS Safari trava o TTS após ~15s; pause()+resume() a cada 14s reseta o timer interno.
-    iosKeepAliveRef.current = setInterval(() => {
-      if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
-        window.speechSynthesis.pause();
-        window.speechSynthesis.resume();
-      }
-    }, 14000);
+    // Keep-alive apenas para iOS; em Chrome/Android isso pode interromper a fila do TTS.
+    if (shouldUseIOSKeepAlive()) {
+      iosKeepAliveRef.current = setInterval(() => {
+        if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+          window.speechSynthesis.pause();
+          window.speechSynthesis.resume();
+        }
+      }, 14000);
+    }
 
     const getBestVoice = () => {
       const voices = window.speechSynthesis.getVoices();
